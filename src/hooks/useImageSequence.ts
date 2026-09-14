@@ -2,12 +2,25 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { ALL_FRAMES, TOTAL_FRAMES } from '../data/frameSequences';
 
 interface UseImageSequenceReturn {
-  currentFrame: number;
-  setFrameIndex: (idx: number) => void;
-  drawFrameToCanvas: (canvas: HTMLCanvasElement, frameIndex: number) => void;
+  drawFrameToCanvas: (canvas: HTMLCanvasElement, exactFrame: number) => void;
   isLoading: boolean;
   loadProgress: number; // 0 to 100
   totalLoaded: number;
+}
+
+interface LayoutBox {
+  renderWidth: number;
+  renderHeight: number;
+  offsetX: number;
+  offsetY: number;
+  isDesktop: boolean;
+}
+
+interface CachedGradients {
+  key: string;
+  left: CanvasGradient;
+  top: CanvasGradient;
+  bottom: CanvasGradient;
 }
 
 export const useImageSequence = (
@@ -15,11 +28,12 @@ export const useImageSequence = (
 ): UseImageSequenceReturn => {
   const imagesCacheRef = useRef<Map<number, HTMLImageElement>>(new Map());
   const loadingQueueRef = useRef<Set<number>>(new Set());
-  const lastDrawnFrameRef = useRef<number>(-1);
   const [loadProgress, setLoadProgress] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [totalLoaded, setTotalLoaded] = useState<number>(0);
-  const currentFrameRef = useRef<number>(0);
+
+  // Cache gradient objects across draws — they only depend on layout, not frame
+  const gradientCacheRef = useRef<CachedGradients | null>(null);
 
   // Load a single frame by index
   const loadFrame = useCallback((index: number): Promise<HTMLImageElement | null> => {
@@ -59,7 +73,6 @@ export const useImageSequence = (
     let isCancelled = false;
 
     const runInitialPreload = async () => {
-      // Priority 1: Load the very first frame immediately
       await loadFrame(0);
       if (isCancelled) return;
       setIsLoading(false);
@@ -83,7 +96,6 @@ export const useImageSequence = (
         setLoadProgress(progress);
       }
 
-      // Progressive background loading of all remaining frames via requestIdleCallback
       const remaining: number[] = [];
       for (let i = 0; i < TOTAL_FRAMES; i++) {
         if (!imagesCacheRef.current.has(i) && !loadingQueueRef.current.has(i)) {
@@ -135,22 +147,11 @@ export const useImageSequence = (
     return firstAvailable || null;
   }, []);
 
-  // Optimized Canvas Drawing: Positions image on the RIGHT side on desktop matching reference
-  const drawFrameToCanvas = useCallback((canvas: HTMLCanvasElement, frameIndex: number) => {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const img = getClosestImage(frameIndex);
-    if (!img || !img.complete || img.naturalWidth === 0) return;
-
-    lastDrawnFrameRef.current = frameIndex;
-
+  // Pure layout math — same box logic as before, extracted so both frames use identical positioning
+  const computeLayout = useCallback((canvas: HTMLCanvasElement, img: HTMLImageElement): LayoutBox => {
     const canvasWidth = canvas.width;
     const canvasHeight = canvas.height;
-    const imgWidth = img.naturalWidth;
-    const imgHeight = img.naturalHeight;
-
-    const imgRatio = imgWidth / imgHeight;
+    const imgRatio = img.naturalWidth / img.naturalHeight;
     const isDesktop = canvasWidth > 1080;
 
     let renderWidth: number;
@@ -159,7 +160,6 @@ export const useImageSequence = (
     let offsetY: number;
 
     if (isDesktop) {
-      // Desktop: Anchored neatly on the right side (~60% max width, ~76% max height)
       const maxBoxWidth = canvasWidth * 0.60;
       const maxBoxHeight = canvasHeight * 0.76;
 
@@ -171,12 +171,10 @@ export const useImageSequence = (
         renderHeight = maxBoxWidth / imgRatio;
       }
 
-      // Position toward right side with generous clearance for left text
       const rightMargin = canvasWidth * 0.035;
       offsetX = canvasWidth - renderWidth - rightMargin;
       offsetY = (canvasHeight - renderHeight) / 2;
     } else {
-      // Tablet / Mobile: Centered in upper half
       const maxBoxWidth = canvasWidth * 0.94;
       const maxBoxHeight = canvasHeight * 0.48;
 
@@ -192,65 +190,109 @@ export const useImageSequence = (
       offsetY = canvasHeight * 0.08;
     }
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    return { renderWidth, renderHeight, offsetX, offsetY, isDesktop };
+  }, []);
 
-    // High quality scaling
+  // Gradients only depend on the box geometry, not on which frame is showing —
+  // recompute only when that geometry actually changes (e.g. on resize).
+  const getEdgeGradients = useCallback((
+    ctx: CanvasRenderingContext2D,
+    box: LayoutBox
+  ): CachedGradients => {
+    const key = `${Math.round(box.offsetX)}-${Math.round(box.offsetY)}-${Math.round(box.renderWidth)}-${Math.round(box.renderHeight)}`;
+    if (gradientCacheRef.current && gradientCacheRef.current.key === key) {
+      return gradientCacheRef.current;
+    }
+
+    const { offsetX, offsetY, renderWidth, renderHeight } = box;
+
+    const left = ctx.createLinearGradient(offsetX, 0, offsetX + renderWidth * 0.22, 0);
+    left.addColorStop(0, 'rgba(5, 5, 5, 1)');
+    left.addColorStop(0.35, 'rgba(5, 5, 5, 0.7)');
+    left.addColorStop(0.75, 'rgba(5, 5, 5, 0.25)');
+    left.addColorStop(1, 'rgba(5, 5, 5, 0)');
+
+    const top = ctx.createLinearGradient(0, offsetY, 0, offsetY + renderHeight * 0.14);
+    top.addColorStop(0, 'rgba(5, 5, 5, 0.95)');
+    top.addColorStop(0.5, 'rgba(5, 5, 5, 0.4)');
+    top.addColorStop(1, 'rgba(5, 5, 5, 0)');
+
+    const bottom = ctx.createLinearGradient(0, offsetY + renderHeight * 0.86, 0, offsetY + renderHeight);
+    bottom.addColorStop(0, 'rgba(5, 5, 5, 0)');
+    bottom.addColorStop(0.5, 'rgba(5, 5, 5, 0.4)');
+    bottom.addColorStop(1, 'rgba(5, 5, 5, 0.95)');
+
+    const cached: CachedGradients = { key, left, top, bottom };
+    gradientCacheRef.current = cached;
+    return cached;
+  }, []);
+
+  // Main draw entry point. `exactFrame` is now a FLOAT (e.g. 42.63), not an int.
+  // We draw the two nearest integer frames and cross-fade between them based on
+  // the fractional part — this is what fakes the motion blur a real video has.
+  const drawFrameToCanvas = useCallback((canvas: HTMLCanvasElement, exactFrame: number) => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const clamped = Math.max(0, Math.min(TOTAL_FRAMES - 1, exactFrame));
+    const frameA = Math.floor(clamped);
+    const frameB = Math.min(frameA + 1, TOTAL_FRAMES - 1);
+    const blend = clamped - frameA;
+
+    const imgA = getClosestImage(frameA);
+    const imgB = getClosestImage(frameB);
+
+    if (!imgA || !imgA.complete || imgA.naturalWidth === 0) return;
+
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const box = computeLayout(canvas, imgA);
+    const { renderWidth, renderHeight, offsetX, offsetY, isDesktop } = box;
+
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    // Draw the image
-    ctx.drawImage(img, offsetX, offsetY, renderWidth, renderHeight);
+    // Draw base frame at full opacity
+    ctx.globalAlpha = 1;
+    ctx.drawImage(imgA, offsetX, offsetY, renderWidth, renderHeight);
 
-    // Soft edge feathering so the frame blends seamlessly into ambient dark background
+    // Cross-fade the next frame on top, scaled by fractional position between frames
+    if (imgB && imgB !== imgA && imgB.complete && imgB.naturalWidth > 0 && blend > 0.001) {
+      ctx.globalAlpha = blend;
+      ctx.drawImage(imgB, offsetX, offsetY, renderWidth, renderHeight);
+      ctx.globalAlpha = 1;
+    }
+
+    // Edge feathering — cached, reused across frames
     if (isDesktop) {
-      // Left edge blend (wide gradient feathering from deep black #050505 to transparent)
-      const leftGrad = ctx.createLinearGradient(offsetX, 0, offsetX + renderWidth * 0.22, 0);
-      leftGrad.addColorStop(0, 'rgba(5, 5, 5, 1)');
-      leftGrad.addColorStop(0.35, 'rgba(5, 5, 5, 0.7)');
-      leftGrad.addColorStop(0.75, 'rgba(5, 5, 5, 0.25)');
-      leftGrad.addColorStop(1, 'rgba(5, 5, 5, 0)');
-      ctx.fillStyle = leftGrad;
+      const grads = getEdgeGradients(ctx, box);
+
+      ctx.fillStyle = grads.left;
       ctx.fillRect(offsetX, offsetY - 2, renderWidth * 0.22 + 2, renderHeight + 4);
 
-      // Top edge blend
-      const topGrad = ctx.createLinearGradient(0, offsetY, 0, offsetY + renderHeight * 0.14);
-      topGrad.addColorStop(0, 'rgba(5, 5, 5, 0.95)');
-      topGrad.addColorStop(0.5, 'rgba(5, 5, 5, 0.4)');
-      topGrad.addColorStop(1, 'rgba(5, 5, 5, 0)');
-      ctx.fillStyle = topGrad;
+      ctx.fillStyle = grads.top;
       ctx.fillRect(offsetX - 2, offsetY - 2, renderWidth + 4, renderHeight * 0.14);
 
-      // Bottom edge blend
-      const botGrad = ctx.createLinearGradient(0, offsetY + renderHeight * 0.86, 0, offsetY + renderHeight);
-      botGrad.addColorStop(0, 'rgba(5, 5, 5, 0)');
-      botGrad.addColorStop(0.5, 'rgba(5, 5, 5, 0.4)');
-      botGrad.addColorStop(1, 'rgba(5, 5, 5, 0.95)');
-      ctx.fillStyle = botGrad;
+      ctx.fillStyle = grads.bottom;
       ctx.fillRect(offsetX - 2, offsetY + renderHeight * 0.86, renderWidth + 4, renderHeight * 0.14 + 4);
     }
 
-    // Dynamic lookahead & lookbehind: preload frames around current scrub position
+    // Preload frames around current scrub position
     const lookahead = 20;
     for (let i = 1; i <= lookahead; i++) {
-      const ahead = frameIndex + i;
+      const ahead = frameA + i;
       if (ahead < TOTAL_FRAMES && !imagesCacheRef.current.has(ahead)) {
         loadFrame(ahead);
       }
-      const behind = frameIndex - i;
+      const behind = frameA - i;
       if (behind >= 0 && !imagesCacheRef.current.has(behind)) {
         loadFrame(behind);
       }
     }
-  }, [getClosestImage, loadFrame]);
-
-  const setFrameIndex = useCallback((idx: number) => {
-    currentFrameRef.current = Math.max(0, Math.min(TOTAL_FRAMES - 1, idx));
-  }, []);
+  }, [getClosestImage, computeLayout, getEdgeGradients, loadFrame]);
 
   return {
-    currentFrame: currentFrameRef.current,
-    setFrameIndex,
     drawFrameToCanvas,
     isLoading,
     loadProgress,

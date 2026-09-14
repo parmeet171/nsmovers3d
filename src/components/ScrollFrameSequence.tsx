@@ -7,7 +7,7 @@ gsap.registerPlugin(ScrollTrigger);
 
 interface ScrollFrameSequenceProps {
   onProgressUpdate: (progress: number, frameIndex: number) => void;
-  drawFrameToCanvas: (canvas: HTMLCanvasElement, frameIndex: number) => void;
+  drawFrameToCanvas: (canvas: HTMLCanvasElement, exactFrame: number) => void;
   isReady: boolean;
 }
 
@@ -19,8 +19,52 @@ export const ScrollFrameSequence: React.FC<ScrollFrameSequenceProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<ScrollTrigger | null>(null);
-  const currentFrameRef = useRef<number>(0);
+
+  // Latest smoothed scroll progress (0-1), read continuously by the render loop
+  const latestProgressRef = useRef<number>(0);
+
+  // Persistent rAF loop plumbing — draws every animation frame while scrubbing,
+  // instead of only when the integer frame index changes.
   const rafIdRef = useRef<number | null>(null);
+  const isLoopRunningRef = useRef<boolean>(false);
+  const idleTimeoutRef = useRef<number | null>(null);
+
+  const exactFrameFromProgress = (progress: number) => progress * (TOTAL_FRAMES - 1);
+
+  const renderLoop = useCallback(() => {
+    if (!isLoopRunningRef.current) return;
+    const canvas = canvasRef.current;
+    if (canvas) {
+      drawFrameToCanvas(canvas, exactFrameFromProgress(latestProgressRef.current));
+    }
+    rafIdRef.current = requestAnimationFrame(renderLoop);
+  }, [drawFrameToCanvas]);
+
+  const ensureLoopRunning = useCallback(() => {
+    if (!isLoopRunningRef.current) {
+      isLoopRunningRef.current = true;
+      rafIdRef.current = requestAnimationFrame(renderLoop);
+    }
+  }, [renderLoop]);
+
+  // Stop the loop shortly after scroll input stops, then do one final precise draw.
+  // Avoids burning rAF cycles forever while the page sits idle.
+  const scheduleLoopStop = useCallback(() => {
+    if (idleTimeoutRef.current) {
+      window.clearTimeout(idleTimeoutRef.current);
+    }
+    idleTimeoutRef.current = window.setTimeout(() => {
+      isLoopRunningRef.current = false;
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      const canvas = canvasRef.current;
+      if (canvas) {
+        drawFrameToCanvas(canvas, exactFrameFromProgress(latestProgressRef.current));
+      }
+    }, 120);
+  }, [drawFrameToCanvas]);
 
   // Resize handler ensuring canvas internal resolution matches device pixel ratio
   const handleResize = useCallback(() => {
@@ -34,11 +78,9 @@ export const ScrollFrameSequence: React.FC<ScrollFrameSequenceProps> = ({
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
 
-    // Re-draw current frame at new resolution
-    drawFrameToCanvas(canvas, currentFrameRef.current);
+    drawFrameToCanvas(canvas, exactFrameFromProgress(latestProgressRef.current));
   }, [drawFrameToCanvas]);
 
-  // Handle Window Resize
   useEffect(() => {
     handleResize();
     window.addEventListener('resize', handleResize);
@@ -48,7 +90,7 @@ export const ScrollFrameSequence: React.FC<ScrollFrameSequenceProps> = ({
   // Initial draw when ready
   useEffect(() => {
     if (isReady && canvasRef.current) {
-      drawFrameToCanvas(canvasRef.current, currentFrameRef.current);
+      drawFrameToCanvas(canvasRef.current, exactFrameFromProgress(latestProgressRef.current));
     }
   }, [isReady, drawFrameToCanvas]);
 
@@ -61,53 +103,51 @@ export const ScrollFrameSequence: React.FC<ScrollFrameSequenceProps> = ({
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Create ScrollTrigger tied to the scroll container
     const trigger = ScrollTrigger.create({
       trigger: scrollContainer,
       start: 'top top',
       end: 'bottom bottom',
-      scrub: prefersReducedMotion ? 0 : 0.25, // Instant scrub if reduced motion is preferred
+      scrub: prefersReducedMotion ? 0 : 0.25,
       onUpdate: (self) => {
         const progress = Math.max(0, Math.min(1, self.progress));
+        latestProgressRef.current = progress;
+
+        // Keep the continuous render loop alive while scroll updates are coming in
+        ensureLoopRunning();
+        scheduleLoopStop();
+
         const targetFrame = Math.min(
           TOTAL_FRAMES - 1,
           Math.floor(progress * (TOTAL_FRAMES - 1))
         );
-
-        if (targetFrame !== currentFrameRef.current) {
-          currentFrameRef.current = targetFrame;
-
-          // Request frame draw on next animation frame
-          if (rafIdRef.current) {
-            cancelAnimationFrame(rafIdRef.current);
-          }
-
-          rafIdRef.current = requestAnimationFrame(() => {
-            if (canvasRef.current) {
-              drawFrameToCanvas(canvasRef.current, targetFrame);
-            }
-          });
-        }
-
-        // Send progress to parent for UI indicator synchronization
         onProgressUpdate(progress, targetFrame);
       }
     });
 
     triggerRef.current = trigger;
 
-    // Immediately synchronize progress on mount
     const initProg = Math.max(0, Math.min(1, trigger.progress));
+    latestProgressRef.current = initProg;
     onProgressUpdate(initProg, Math.floor(initProg * (TOTAL_FRAMES - 1)));
+    // Draw the initial frame once even if the loop never starts (no scroll yet)
+    if (canvasRef.current) {
+      drawFrameToCanvas(canvasRef.current, exactFrameFromProgress(initProg));
+    }
 
     return () => {
+      isLoopRunningRef.current = false;
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      if (idleTimeoutRef.current) {
+        window.clearTimeout(idleTimeoutRef.current);
+        idleTimeoutRef.current = null;
       }
       trigger.kill();
       triggerRef.current = null;
     };
-  }, [isReady, drawFrameToCanvas, onProgressUpdate]);
+  }, [isReady, drawFrameToCanvas, onProgressUpdate, ensureLoopRunning, scheduleLoopStop]);
 
   return (
     <div
@@ -135,11 +175,9 @@ export const ScrollFrameSequence: React.FC<ScrollFrameSequenceProps> = ({
         }}
       />
 
-      {/* Cinematic Vignette & Atmospheric Gradients */}
       <div className="canvas-vignette" />
       <div className="canvas-ambient-glow" />
 
-      {/* Subtle top & bottom edge shading for perfect UI integration */}
       <div
         style={{
           position: 'absolute',

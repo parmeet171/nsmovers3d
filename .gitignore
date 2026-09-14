@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+*.zip
 
 # Build output
 dist/
@@ -29,3 +30,4 @@ pnpm-debug.log*
 
 # Vite cache
 .vite/
+

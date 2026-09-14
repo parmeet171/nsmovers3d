@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useSmoothScroll } from './hooks/useSmoothScroll';
-import { useImageSequence } from './hooks/useImageSequence';
-import { ScrollFrameSequence } from './components/ScrollFrameSequence';
+import { VideoScrollSequence } from './components/VideoScrollSequence';
 import { LoadingScreen } from './components/LoadingScreen';
 import { Navbar } from './components/Navbar';
 import { JourneyIndicator } from './components/JourneyIndicator';
@@ -18,12 +17,17 @@ export const App: React.FC = () => {
   // Initialize Lenis smooth scroll
   useSmoothScroll();
 
-  // Initialize progressive frame engine
-  const {
-    drawFrameToCanvas,
-    isLoading,
-    loadProgress
-  } = useImageSequence(40);
+  // Video load/readiness state — replaces the old image-preload progress
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadProgress, setLoadProgress] = useState<number>(0);
+
+  const handleReady = useCallback((ready: boolean) => {
+    setIsLoading(!ready);
+  }, []);
+
+  const handleLoadProgress = useCallback((pct: number) => {
+    setLoadProgress(pct);
+  }, []);
 
   // Scroll state
   const [scrollProgress, setScrollProgress] = useState<number>(0);
@@ -31,7 +35,7 @@ export const App: React.FC = () => {
   const [videoModalOpen, setVideoModalOpen] = useState<boolean>(false);
   const [selectedService, setSelectedService] = useState<string | undefined>(undefined);
 
-  // Callback from ScrollFrameSequence on scrub tick
+  // Callback from VideoScrollSequence on scrub tick
   const handleProgressUpdate = useCallback((progress: number) => {
     setScrollProgress(progress);
 
@@ -89,11 +93,13 @@ export const App: React.FC = () => {
         onSelectMilestone={handleSelectMilestone}
       />
 
-      {/* Pinned HTML5 Canvas Sequence Renderer (Framed on Right Side) */}
-      <ScrollFrameSequence
+      {/* Pinned <video> Scrubber (Framed on Right Side) — replaces the JPG frame canvas */}
+      <VideoScrollSequence
+        srcMp4="/video/journey.mp4"
+        srcWebm="/video/journey.webm"
         onProgressUpdate={handleProgressUpdate}
-        drawFrameToCanvas={drawFrameToCanvas}
-        isReady={!isLoading}
+        onLoadProgress={handleLoadProgress}
+        onReady={handleReady}
       />
 
       {/* The 12-Stage Interactive Scroll Journey (Framed on Left Side) */}
