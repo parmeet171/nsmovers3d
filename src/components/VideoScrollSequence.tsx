@@ -24,8 +24,8 @@ interface LayoutBox {
 
 const EMPTY_BOX: LayoutBox = { renderWidth: 0, renderHeight: 0, offsetX: 0, offsetY: 0, isDesktop: true };
 
-// Same box math as the old canvas drawer: right-anchored on desktop, centered
-// upper-half on mobile. Kept identical so the visual layout doesn't shift.
+// Same box math as before: right-anchored on desktop, centered upper-half on
+// mobile. Kept identical so the visual layout doesn't shift.
 function computeLayout(containerW: number, containerH: number, videoW: number, videoH: number): LayoutBox {
   const ratio = videoW / videoH;
   const isDesktop = containerW > 1080;
@@ -81,13 +81,6 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
   const triggerRef = useRef<ScrollTrigger | null>(null);
 
   const [box, setBox] = useState<LayoutBox>(EMPTY_BOX);
-  const durationRef = useRef<number>(0);
-  const lastSetTimeRef = useRef<number>(-1);
-  const latestProgressRef = useRef<number>(0);
-
-  const rafIdRef = useRef<number | null>(null);
-  const isLoopRunningRef = useRef<boolean>(false);
-  const idleTimeoutRef = useRef<number | null>(null);
 
   // Recompute the video's on-screen box whenever the window or video metadata changes
   const recomputeLayout = useCallback(() => {
@@ -98,61 +91,23 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
     setBox(computeLayout(w, h, video.videoWidth, video.videoHeight));
   }, []);
 
-  // Apply a scroll progress value to the video's currentTime.
-  // Guarded so we don't issue redundant seeks (expensive on Safari).
-  const applyProgress = useCallback((progress: number) => {
-    const video = videoRef.current;
-    if (!video || !durationRef.current) return;
-
-    const clamped = Math.max(0, Math.min(1, progress));
-    const targetTime = clamped * durationRef.current;
-
-    // Skip micro-seeks under ~1/60s — they cost a decode with no visible benefit
-    if (Math.abs(targetTime - lastSetTimeRef.current) < 1 / 60) return;
-
-    lastSetTimeRef.current = targetTime;
-    try {
-      video.currentTime = targetTime;
-    } catch {
-      // Some browsers throw if metadata isn't ready yet — safe to ignore, next tick retries
-    }
-  }, []);
-
-  const renderLoop = useCallback(() => {
-    if (!isLoopRunningRef.current) return;
-    applyProgress(latestProgressRef.current);
-    rafIdRef.current = requestAnimationFrame(renderLoop);
-  }, [applyProgress]);
-
-  const ensureLoopRunning = useCallback(() => {
-    if (!isLoopRunningRef.current) {
-      isLoopRunningRef.current = true;
-      rafIdRef.current = requestAnimationFrame(renderLoop);
-    }
-  }, [renderLoop]);
-
-  const scheduleLoopStop = useCallback(() => {
-    if (idleTimeoutRef.current) window.clearTimeout(idleTimeoutRef.current);
-    idleTimeoutRef.current = window.setTimeout(() => {
-      isLoopRunningRef.current = false;
-      if (rafIdRef.current) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-      applyProgress(latestProgressRef.current);
-    }, 120);
-  }, [applyProgress]);
-
-  // Video element setup: metadata, buffering progress, resize
+  // Video element setup: metadata, buffering progress, autoplay/loop, resize.
+  // The video now plays on its own — nothing here reacts to scroll.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handleLoadedMetadata = () => {
-      durationRef.current = video.duration || 0;
       recomputeLayout();
-      video.pause();
-      applyProgress(latestProgressRef.current);
+      // Let the video run continuously on its own loop, independent of scroll.
+      video.loop = true;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          // Autoplay can be blocked before user interaction on some browsers;
+          // it will start as soon as the user interacts with the page.
+        });
+      }
     };
 
     const handleCanPlayThrough = () => {
@@ -179,11 +134,13 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
       video.removeEventListener('progress', handleProgress);
       window.removeEventListener('resize', recomputeLayout);
     };
-  }, [recomputeLayout, applyProgress, onReady, onLoadProgress]);
+  }, [recomputeLayout, onReady, onLoadProgress]);
 
-  // GSAP ScrollTrigger binding — identical pattern to the old frame-sequence version
+  // GSAP ScrollTrigger binding — now purely for reporting scroll progress to
+  // the parent (drives the left-side text panel + journey dot indicator).
+  // It no longer touches the video's playback or currentTime in any way.
   useEffect(() => {
-    if (!containerRef.current || !videoRef.current) return;
+    if (!containerRef.current) return;
 
     const scrollContainer = document.getElementById('cinematic-scroll-track');
     if (!scrollContainer) return;
@@ -197,9 +154,6 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
       scrub: prefersReducedMotion ? 0 : 0.25,
       onUpdate: (self) => {
         const progress = Math.max(0, Math.min(1, self.progress));
-        latestProgressRef.current = progress;
-        ensureLoopRunning();
-        scheduleLoopStop();
         onProgressUpdate(progress);
       }
     });
@@ -207,18 +161,13 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
     triggerRef.current = trigger;
 
     const initProg = Math.max(0, Math.min(1, trigger.progress));
-    latestProgressRef.current = initProg;
     onProgressUpdate(initProg);
-    applyProgress(initProg);
 
     return () => {
-      isLoopRunningRef.current = false;
-      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-      if (idleTimeoutRef.current) window.clearTimeout(idleTimeoutRef.current);
       trigger.kill();
       triggerRef.current = null;
     };
-  }, [ensureLoopRunning, scheduleLoopStop, applyProgress, onProgressUpdate]);
+  }, [onProgressUpdate]);
 
   const { renderWidth, renderHeight, offsetX, offsetY, isDesktop } = box;
   const hasBox = renderWidth > 0 && renderHeight > 0;
@@ -242,6 +191,8 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
       <video
         ref={videoRef}
         muted
+        autoPlay
+        loop
         playsInline
         preload="auto"
         disablePictureInPicture
