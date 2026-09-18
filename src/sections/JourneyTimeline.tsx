@@ -158,16 +158,27 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
   onQuoteClick,
   onVideoClick
 }) => {
-  const s1 = getSectionAnim(progress, -0.01, 0.00, 0.08, 0.10);
-  const s2 = getSectionAnim(progress, 0.08, 0.10, 0.18, 0.20);
-  const s3 = getSectionAnim(progress, 0.18, 0.20, 0.28, 0.30);
-  const s4 = getSectionAnim(progress, 0.28, 0.30, 0.38, 0.40);
-  const s5 = getSectionAnim(progress, 0.38, 0.40, 0.48, 0.50);
-  const s6 = getSectionAnim(progress, 0.48, 0.50, 0.58, 0.60);
-  const s7 = getSectionAnim(progress, 0.58, 0.60, 0.70, 0.72);
-  const s8 = getSectionAnim(progress, 0.70, 0.72, 0.80, 0.82);
-  const s9 = getSectionAnim(progress, 0.80, 0.82, 0.90, 0.92);
-  const s10 = getSectionAnim(progress, 0.90, 0.92, 1.05, 1.10);
+  // const s1 = getSectionAnim(progress, -0.01, 0.00, 0.08, 0.10);
+  // const s2 = getSectionAnim(progress, 0.08, 0.10, 0.18, 0.20);
+  // const s3 = getSectionAnim(progress, 0.18, 0.20, 0.28, 0.30);
+  // const s4 = getSectionAnim(progress, 0.28, 0.30, 0.38, 0.40);
+  // const s5 = getSectionAnim(progress, 0.38, 0.40, 0.48, 0.50);
+  // const s6 = getSectionAnim(progress, 0.48, 0.50, 0.58, 0.60);
+  // const s7 = getSectionAnim(progress, 0.58, 0.60, 0.70, 0.72);
+  // const s8 = getSectionAnim(progress, 0.70, 0.72, 0.80, 0.82);
+  // const s9 = getSectionAnim(progress, 0.80, 0.82, 0.90, 0.92);
+  // const s10 = getSectionAnim(progress, 0.90, 0.92, 1.05, 1.10);
+
+  const s1 = getSectionAnim(progress, -0.01, 0.00, 0.08, 0.09);
+  const s2 = getSectionAnim(progress, 0.09, 0.10, 0.18, 0.19);
+  const s3 = getSectionAnim(progress, 0.19, 0.20, 0.28, 0.29);
+  const s4 = getSectionAnim(progress, 0.29, 0.30, 0.38, 0.39);
+  const s5 = getSectionAnim(progress, 0.39, 0.40, 0.48, 0.49);
+  const s6 = getSectionAnim(progress, 0.49, 0.50, 0.58, 0.59);
+  const s7 = getSectionAnim(progress, 0.59, 0.60, 0.70, 0.71);
+  const s8 = getSectionAnim(progress, 0.71, 0.72, 0.80, 0.81);
+  const s9 = getSectionAnim(progress, 0.81, 0.82, 0.90, 0.91);
+  const s10 = getSectionAnim(progress, 0.91, 0.92, 1.05, 1.10);
 
   const sectionStyle = (s: ReturnType<typeof getSectionAnim>): React.CSSProperties => ({
     position: 'absolute',
@@ -178,7 +189,8 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
     opacity: s.opacity,
     filter: s.blur > 0.2 ? `blur(${s.blur.toFixed(1)}px)` : 'none',
     pointerEvents: s.opacity > 0.5 ? 'auto' : 'none',
-    transition: 'opacity 0.15s linear, transform 0.15s linear',
+    // transition: 'opacity 0.15s linear, transform 0.15s linear',
+    transition: 'opacity 0.1s ease-out, transform 0.1s ease-out',
     display: 'flex',
     flexDirection: 'column',
     gap: '14px'
@@ -190,7 +202,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
       style={{
         position: 'relative',
         width: '100%',
-        height: '1150vh',
+        height: '100vh',
         zIndex: 10
       }}
     >
@@ -244,9 +256,9 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                 <button onClick={onQuoteClick} className="btn-primary" style={{ padding: '14px 28px', fontSize: '0.85rem' }}>
                   GET A FREE QUOTE <ArrowRight size={15} />
                 </button>
-                <button onClick={onVideoClick} className="btn-secondary" style={{ padding: '13px 24px', fontSize: '0.85rem' }}>
+                {/* <button onClick={onVideoClick} className="btn-secondary" style={{ padding: '13px 24px', fontSize: '0.85rem' }}>
                   <Play size={14} fill="#FF9D32" color="#FF9D32" /> WATCH VIDEO
-                </button>
+                </button> */}
               </div>
             </div>
           )}
@@ -353,6 +365,22 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
 
               <div className="cinematic-timeline">
                 {(() => {
+                  const isActive = progress < 0.675;
+                  return (
+                    <div className="timeline-item" style={{ opacity: isActive ? 1 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
+                      <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* <span className={`timeline-number ${isActive ? 'active' : ''}`}>01</span> */}
+                        <span className={`timeline-title ${isActive ? 'active' : ''}`}>PROTECTED, SECURED, ORGANIZED, DELIVERED</span>
+                      </div>
+                      <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Handled with care from the very beginning."</div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* <div className="cinematic-timeline">
+                {(() => {
                   const isActive = progress < 0.615;
                   return (
                     <div className="timeline-item" style={{ opacity: isActive ? 1 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
@@ -407,7 +435,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                     </div>
                   );
                 })()}
-              </div>
+              </div> */}
 
               <div className="timeline-footer-accent" style={{ opacity: progress >= 0.67 ? 1 : 0.45, transition: 'opacity 0.3s ease' }}>
                 <div>EVERY MILE.</div>
@@ -552,9 +580,9 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '6px' }}>
-                <div style={{ fontSize: '0.92rem', fontWeight: 800, letterSpacing: '0.18em', color: '#FF9D32' }}>
+                {/* <div style={{ fontSize: '0.92rem', fontWeight: 800, letterSpacing: '0.18em', color: '#FF9D32' }}>
                   NOVA SCOTIA ➔ TORONTO
-                </div>
+                </div> */}
                 <div style={{ fontSize: '0.84rem', fontWeight: 700, letterSpacing: '0.08em', color: '#B8B8B8' }}>
                   NS MOVERS AND HAULERS INC.
                 </div>
@@ -572,7 +600,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
           )}
         </div>
 
-        {progress < 0.08 && (
+        {/* {progress < 0.08 && (
           <div
             style={{
               width: '100%',
@@ -584,7 +612,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
           >
             <StatsBar />
           </div>
-        )}
+        )} */}
       </div>
     </div>
   );

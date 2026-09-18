@@ -82,16 +82,16 @@ export const App: React.FC = () => {
       <div className="ambient-bg-layer" />
 
       {/* Branded Loading Splash Screen */}
-      <LoadingScreen progress={loadProgress} isReady={!isLoading} />
+      {/* <LoadingScreen progress={loadProgress} isReady={!isLoading} /> */}
 
       {/* Fixed Luxury Navigation Bar */}
       <Navbar onQuoteClick={scrollToQuote} activeSection={activeSection} />
 
       {/* Right-Side Journey Progress Indicator (All 12 Stages) */}
-      <JourneyIndicator
+      {/* <JourneyIndicator
         currentProgress={scrollProgress}
         onSelectMilestone={handleSelectMilestone}
-      />
+      /> */}
 
       {/* Pinned <video> Scrubber (Framed on Right Side) — replaces the JPG frame canvas */}
       <VideoScrollSequence

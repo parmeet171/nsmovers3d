@@ -1,8 +1,4 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
-
-gsap.registerPlugin(ScrollTrigger);
 
 interface VideoScrollSequenceProps {
   /** Path to the primary video (H.264 mp4). Served from /public. */
@@ -78,7 +74,6 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<ScrollTrigger | null>(null);
 
   const [box, setBox] = useState<LayoutBox>(EMPTY_BOX);
 
@@ -91,23 +86,76 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
     setBox(computeLayout(w, h, video.videoWidth, video.videoHeight));
   }, []);
 
-  // Video element setup: metadata, buffering progress, autoplay/loop, resize.
-  // The video now plays on its own — nothing here reacts to scroll.
+  // The video is the source of truth for the cinematic timeline.
+  // Text progress follows the video's actual playback time, so the user
+  // does not need to scroll to advance the story.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const handleLoadedMetadata = () => {
-      recomputeLayout();
-      // Let the video run continuously on its own loop, independent of scroll.
-      video.loop = true;
+    let nextSectionRequested = false;
+    let cinematicVisible = false;
+    let hasEnteredCinematic = false;
+    let completed = false;
+
+    const playFromSavedPosition = () => {
+      if (completed || video.ended) {
+        // A completed journey is a fresh journey the next time the user
+        // returns to this section.
+        video.currentTime = 0;
+        completed = false;
+      }
+
       const playPromise = video.play();
       if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch(() => {
-          // Autoplay can be blocked before user interaction on some browsers;
-          // it will start as soon as the user interacts with the page.
+          // Autoplay may be blocked until the first user interaction.
         });
       }
+    };
+
+    const scrollToNextSection = () => {
+      if (nextSectionRequested) return;
+
+      const nextSection = document.getElementById('services');
+      if (!nextSection) return;
+
+      nextSectionRequested = true;
+
+      // Keep the currentTime intact. If the user comes back before the
+      // journey has finished, playback will resume from exactly this point.
+      video.pause();
+
+      // Give the current frame a moment to settle before handing the page
+      // over to the next section.
+      window.setTimeout(() => {
+        nextSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 40);
+    };
+
+    const handleLoadedMetadata = () => {
+      recomputeLayout();
+      video.loop = false;
+      video.currentTime = 0;
+      completed = false;
+
+      // Playback is also controlled by the IntersectionObserver below, but
+      // starting here keeps the first frame responsive while the observer
+      // initializes.
+      playFromSavedPosition();
+    };
+
+    const handleTimeUpdate = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+
+      const progress = Math.max(0, Math.min(1, video.currentTime / video.duration));
+      onProgressUpdate(progress);
+    };
+
+    const handleEnded = () => {
+      completed = true;
+      onProgressUpdate(1);
+      scrollToNextSection();
     };
 
     const handleCanPlayThrough = () => {
@@ -122,52 +170,122 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
       onLoadProgress(pct);
     };
 
+    // The cinematic section owns playback only while it is actually visible.
+    // Leaving early pauses the video without changing currentTime, so returning
+    // to the section resumes from the exact frame where the user left.
+    const cinematicTrack = document.getElementById('cinematic-scroll-track');
+
+    const observer = cinematicTrack
+      ? new IntersectionObserver(
+          (entries) => {
+            const entry = entries[0];
+            if (!entry) return;
+
+            cinematicVisible = entry.isIntersecting && entry.intersectionRatio > 0.15;
+
+            if (cinematicVisible) {
+              if (!hasEnteredCinematic) {
+                hasEnteredCinematic = true;
+                nextSectionRequested = false;
+              } else {
+                // Returning after a completed journey starts the cinematic
+                // from the beginning. Returning after an interrupted journey
+                // preserves currentTime.
+                nextSectionRequested = false;
+              }
+
+              playFromSavedPosition();
+            } else if (hasEnteredCinematic && !video.ended) {
+              video.pause();
+            }
+          },
+          { threshold: [0, 0.15, 0.5, 1] }
+        )
+      : null;
+
+    if (observer && cinematicTrack) {
+      observer.observe(cinematicTrack);
+    }
+
+    // Any intentional user scroll while the cinematic is visible immediately
+    // hands control to the next section. If the section is not visible, these
+    // handlers do nothing, so normal page scrolling is unaffected.
+    const handleWheel = (event: WheelEvent) => {
+      // Only a downward scroll should advance past the cinematic.
+      // Upward scrolling must remain a normal page-navigation action so the
+      // user can return to the animation without being pushed forward again.
+      if (!cinematicVisible || nextSectionRequested || video.ended || video.paused) return;
+      if (event.deltaY <= 1) return;
+
+      event.preventDefault();
+      scrollToNextSection();
+    };
+
+    let lastTouchY: number | null = null;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY ?? null;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!cinematicVisible || nextSectionRequested || video.ended || video.paused) return;
+
+      const currentY = event.touches[0]?.clientY;
+      if (currentY == null || lastTouchY == null) return;
+
+      // Finger moving upward means page scrolling downward.
+      const deltaY = lastTouchY - currentY;
+      lastTouchY = currentY;
+
+      if (deltaY <= 1) return;
+
+      event.preventDefault();
+      scrollToNextSection();
+    };
+
+    const handleTouchEnd = () => {
+      lastTouchY = null;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!cinematicVisible || nextSectionRequested || video.ended || video.paused) return;
+
+      const scrollKeys = ['ArrowDown', 'PageDown', ' ', 'End'];
+      if (!scrollKeys.includes(event.key)) return;
+
+      event.preventDefault();
+      scrollToNextSection();
+    };
+
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('ended', handleEnded);
     video.addEventListener('canplaythrough', handleCanPlayThrough);
     video.addEventListener('progress', handleProgress);
 
+    window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+    window.addEventListener('touchstart', handleTouchStart, { passive: true, capture: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
     window.addEventListener('resize', recomputeLayout);
 
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('ended', handleEnded);
       video.removeEventListener('canplaythrough', handleCanPlayThrough);
       video.removeEventListener('progress', handleProgress);
+
+      window.removeEventListener('wheel', handleWheel, { capture: true });
+      window.removeEventListener('touchstart', handleTouchStart, { capture: true });
+      window.removeEventListener('touchmove', handleTouchMove, { capture: true });
+      window.removeEventListener('touchend', handleTouchEnd, { capture: true });
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
       window.removeEventListener('resize', recomputeLayout);
+      observer?.disconnect();
     };
-  }, [recomputeLayout, onReady, onLoadProgress]);
-
-  // GSAP ScrollTrigger binding — now purely for reporting scroll progress to
-  // the parent (drives the left-side text panel + journey dot indicator).
-  // It no longer touches the video's playback or currentTime in any way.
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const scrollContainer = document.getElementById('cinematic-scroll-track');
-    if (!scrollContainer) return;
-
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    const trigger = ScrollTrigger.create({
-      trigger: scrollContainer,
-      start: 'top top',
-      end: 'bottom bottom',
-      scrub: prefersReducedMotion ? 0 : 0.25,
-      onUpdate: (self) => {
-        const progress = Math.max(0, Math.min(1, self.progress));
-        onProgressUpdate(progress);
-      }
-    });
-
-    triggerRef.current = trigger;
-
-    const initProg = Math.max(0, Math.min(1, trigger.progress));
-    onProgressUpdate(initProg);
-
-    return () => {
-      trigger.kill();
-      triggerRef.current = null;
-    };
-  }, [onProgressUpdate]);
+  }, [recomputeLayout, onProgressUpdate, onReady, onLoadProgress]);
 
   const { renderWidth, renderHeight, offsetX, offsetY, isDesktop } = box;
   const hasBox = renderWidth > 0 && renderHeight > 0;
@@ -192,7 +310,6 @@ export const VideoScrollSequence: React.FC<VideoScrollSequenceProps> = ({
         ref={videoRef}
         muted
         autoPlay
-        loop
         playsInline
         preload="auto"
         disablePictureInPicture
