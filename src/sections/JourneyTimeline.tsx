@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { motion, useMotionValue, useSpring, useTransform, MotionValue } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
 import { StatsBar } from '../components/StatsBar';
 
@@ -8,42 +9,63 @@ interface JourneyTimelineProps {
   onVideoClick: () => void;
 }
 
-// Continuous smooth section animation calculator: 0 gaps, smooth crossfade & vertical drift
-function getSectionAnim(
-  progress: number,
-  inStart: number,
-  inEnd: number,
-  outStart: number,
-  outEnd: number
-) {
-  if (progress < inStart || progress > outEnd) {
-    return { opacity: 0, translateY: 16, blur: 4, isVisible: false };
-  }
-  if (progress < inEnd) {
-    const f = (progress - inStart) / (inEnd - inStart);
-    return { opacity: f, translateY: 16 * (1 - f), blur: 3 * (1 - f), isVisible: true };
-  }
-  if (progress <= outStart) {
-    return { opacity: 1, translateY: 0, blur: 0, isVisible: true };
-  }
-  const f = (progress - outStart) / (outEnd - outStart);
-  return { opacity: 1 - f, translateY: -16 * f, blur: 3 * f, isVisible: true };
+/* ============================================================
+   WHY FRAMER MOTION HELPS HERE
+
+   The previous versions recomputed opacity/blur/scale/position in
+   plain JS on every scroll tick, stuffed them into React state, and
+   let React re-render the whole tree to apply new inline styles.
+   That's the actual source of the "not quite smooth" feeling — you
+   were fighting React's render cycle, not picking the wrong easing
+   curve.
+
+   This version:
+   1. Feeds the raw `progress` prop into a Framer Motion MotionValue.
+   2. Runs it through `useSpring` for physical smoothing — real
+      mass/stiffness/damping, so fast scroll flicks decelerate
+      naturally instead of the text jumping frame to frame.
+   3. Derives every section's opacity/y/scale/blur with `useTransform`,
+      which writes directly to the DOM (not through React state), so
+      scrolling never triggers a re-render of this component at all —
+      only the style values update, every frame, off the React render
+      path.
+
+   Net effect: same visual language as Variant A (crossfade + drift),
+   but driven by real spring physics instead of a hand-rolled easing
+   function recalculated in JS on each render.
+============================================================ */
+
+const SECTION_COUNT = 10;
+const SEGMENT = 1 / SECTION_COUNT;
+const FADE = 0.002; // dial to taste — this is the only "timing" knob now
+
+function sectionWindow(index: number, isLast: boolean) {
+  const start = index * SEGMENT;
+  const end = isLast ? 1.15 : start + SEGMENT;
+  return {
+    inStart: start - FADE,
+    inEnd: start,
+    outStart: isLast ? end : end - FADE,
+    outEnd: end
+  };
 }
 
-/**
- * IMPORTANT FIX:
- * The original file used classNames (.section-kicker, .text-amber-glow, .btn-primary,
- * .btn-secondary, .cinematic-timeline, .timeline-item, .timeline-bullet, .timeline-title,
- * .timeline-quote, .timeline-footer-accent, .kicker-subtle) that were never defined in
- * this file. If your global stylesheet doesn't define them (or isn't loaded on this page),
- * those elements get NO color/font styling at all — they inherit whatever your global
- * text color is, which is why text silently disappears on the dark background.
- *
- * This <style> block makes the component self-sufficient: it will always render
- * correctly even if your global CSS file is missing, renamed, or not imported here.
- * If you already have these classes defined elsewhere with different values, you can
- * safely delete this block once you confirm the real stylesheet is loading.
- */
+// One custom hook, called once per section. Fixed 10 calls below (s1..s10),
+// never in a loop/conditional, so it's safe under the rules of hooks.
+function useSectionMotion(progress: MotionValue<number>, index: number, isLast: boolean) {
+  const { inStart, inEnd, outStart, outEnd } = sectionWindow(index, isLast);
+
+  const opacity = useTransform(progress, [inStart, inEnd, outStart, outEnd], [0, 1, 1, 0]);
+  const y = useTransform(progress, [inStart, inEnd, outStart, outEnd], [18, 0, 0, -18]);
+  const scale = useTransform(progress, [inStart, inEnd, outStart, outEnd], [0.98, 1, 1, 0.98]);
+  const blur = useTransform(opacity, (v) => `blur(${((1 - v) * 5).toFixed(1)}px)`);
+  const pointerEvents = useTransform(opacity, (v) => (v > 0.6 ? 'auto' : 'none')) as MotionValue<
+    'auto' | 'none'
+  >;
+
+  return { opacity, y, scale, blur, pointerEvents };
+}
+
 const localStyles = `
 .section-kicker {
   font-size: 0.78rem;
@@ -117,14 +139,6 @@ const localStyles = `
   background: #FF9D32;
   box-shadow: 0 0 10px rgba(255, 157, 50, 0.7);
 }
-.timeline-number {
-  color: rgba(255, 255, 255, 0.45);
-  font-weight: 800;
-  font-size: 0.8rem;
-}
-.timeline-number.active {
-  color: #FF9D32;
-}
 .timeline-title {
   color: rgba(255, 255, 255, 0.55);
   font-weight: 800;
@@ -158,41 +172,49 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
   onQuoteClick,
   onVideoClick
 }) => {
-  // const s1 = getSectionAnim(progress, -0.01, 0.00, 0.08, 0.10);
-  // const s2 = getSectionAnim(progress, 0.08, 0.10, 0.18, 0.20);
-  // const s3 = getSectionAnim(progress, 0.18, 0.20, 0.28, 0.30);
-  // const s4 = getSectionAnim(progress, 0.28, 0.30, 0.38, 0.40);
-  // const s5 = getSectionAnim(progress, 0.38, 0.40, 0.48, 0.50);
-  // const s6 = getSectionAnim(progress, 0.48, 0.50, 0.58, 0.60);
-  // const s7 = getSectionAnim(progress, 0.58, 0.60, 0.70, 0.72);
-  // const s8 = getSectionAnim(progress, 0.70, 0.72, 0.80, 0.82);
-  // const s9 = getSectionAnim(progress, 0.80, 0.82, 0.90, 0.92);
-  // const s10 = getSectionAnim(progress, 0.90, 0.92, 1.05, 1.10);
+  // Bridge the plain-number prop into Framer Motion's world once, then let
+  // motion values take over — everything downstream of `spring` updates
+  // without going back through React's render cycle.
+  const rawProgress = useMotionValue(progress);
+  useEffect(() => {
+    rawProgress.set(progress);
+  }, [progress, rawProgress]);
 
-  const s1 = getSectionAnim(progress, -0.01, 0.00, 0.08, 0.09);
-  const s2 = getSectionAnim(progress, 0.09, 0.10, 0.18, 0.19);
-  const s3 = getSectionAnim(progress, 0.19, 0.20, 0.28, 0.29);
-  const s4 = getSectionAnim(progress, 0.29, 0.30, 0.38, 0.39);
-  const s5 = getSectionAnim(progress, 0.39, 0.40, 0.48, 0.49);
-  const s6 = getSectionAnim(progress, 0.49, 0.50, 0.58, 0.59);
-  const s7 = getSectionAnim(progress, 0.59, 0.60, 0.70, 0.71);
-  const s8 = getSectionAnim(progress, 0.71, 0.72, 0.80, 0.81);
-  const s9 = getSectionAnim(progress, 0.81, 0.82, 0.90, 0.91);
-  const s10 = getSectionAnim(progress, 0.91, 0.92, 1.05, 1.10);
+  // Spring smoothing: this is what actually fixes "not smooth". Tune
+  // stiffness/damping to taste — higher stiffness = snappier/less lag,
+  // higher damping = less overshoot/bounce.
+  const spring = useSpring(rawProgress, { stiffness: 260, damping: 32, mass: 0.6 });
 
-  const sectionStyle = (s: ReturnType<typeof getSectionAnim>): React.CSSProperties => ({
+  const s1 = useSectionMotion(spring, 0, false);
+  const s2 = useSectionMotion(spring, 1, false);
+  const s3 = useSectionMotion(spring, 2, false);
+  const s4 = useSectionMotion(spring, 3, false);
+  const s5 = useSectionMotion(spring, 4, false);
+  const s6 = useSectionMotion(spring, 5, false);
+  const s7 = useSectionMotion(spring, 6, false);
+  const s8 = useSectionMotion(spring, 7, false);
+  const s9 = useSectionMotion(spring, 8, false);
+  const s10 = useSectionMotion(spring, 9, true);
+
+  // Static centering wrapper (always at vertical center); the motion.div
+  // inside carries the actual animated y/opacity/scale/blur so the two
+  // transforms compose cleanly instead of fighting over the same style.
+  const wrapperStyle: React.CSSProperties = {
     position: 'absolute',
     top: '50%',
     left: 0,
     width: '100%',
-    transform: `translateY(calc(-50% + ${s.translateY}px))`,
+    transform: 'translateY(-50%)'
+  };
+
+  const innerStyleFor = (s: ReturnType<typeof useSectionMotion>) => ({
     opacity: s.opacity,
-    filter: s.blur > 0.2 ? `blur(${s.blur.toFixed(1)}px)` : 'none',
-    pointerEvents: s.opacity > 0.5 ? 'auto' : 'none',
-    // transition: 'opacity 0.15s linear, transform 0.15s linear',
-    transition: 'opacity 0.1s ease-out, transform 0.1s ease-out',
+    y: s.y,
+    scale: s.scale,
+    filter: s.blur,
+    pointerEvents: s.pointerEvents,
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'column' as const,
     gap: '14px'
   });
 
@@ -234,8 +256,8 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
           }}
         >
           {/* 01 PICKUP */}
-          {s1.isVisible && (
-            <div style={sectionStyle(s1)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s1)}>
               <div className="section-kicker">PICKUP</div>
               <h1
                 style={{
@@ -256,16 +278,13 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                 <button onClick={onQuoteClick} className="btn-primary" style={{ padding: '14px 28px', fontSize: '0.85rem' }}>
                   GET A FREE QUOTE <ArrowRight size={15} />
                 </button>
-                {/* <button onClick={onVideoClick} className="btn-secondary" style={{ padding: '13px 24px', fontSize: '0.85rem' }}>
-                  <Play size={14} fill="#FF9D32" color="#FF9D32" /> WATCH VIDEO
-                </button> */}
               </div>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 02 PACKING */}
-          {s2.isVisible && (
-            <div style={sectionStyle(s2)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s2)}>
               <div className="section-kicker">PACKING</div>
               <h2
                 style={{
@@ -283,82 +302,72 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                 From furniture to fragile belongings,<br />
                 everything is prepared for the journey.
               </p>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 03 LOADING */}
-          {s3.isVisible && (
-            <div style={sectionStyle(s3)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s3)}>
               <div className="section-kicker">LOADING</div>
-              <h2
-                style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}>
                 LOADED. SECURED.<br />
                 <span className="text-amber-glow">READY.</span>
               </h2>
               <p style={{ fontSize: '0.96rem', color: '#B8B8B8', lineHeight: 1.55, maxWidth: '440px' }}>
                 Balanced axle weight distribution and heavy-duty E-track lockbars anchored with zero cargo shift tolerance.
               </p>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 04 DEPARTURE */}
-          {s4.isVisible && (
-            <div style={sectionStyle(s4)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s4)}>
               <div className="section-kicker">DEPARTURE</div>
-              <h2
-                style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}>
                 TIME TO<br />
                 <span className="text-amber-glow">MOVE.</span>
               </h2>
               <p style={{ fontSize: '0.96rem', color: '#B8B8B8', lineHeight: 1.55, maxWidth: '440px' }}>
                 Trailer doors locked tightly. The truck departs Nova Scotia and takes to the open road heading west toward Ontario.
               </p>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 05 ROUTE */}
-          {s5.isVisible && (
-            <div style={sectionStyle(s5)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s5)}>
               <div className="section-kicker">ROUTE</div>
-              <h2
-                style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}>
                 NOVA SCOTIA<br />
                 <span className="text-amber-glow">➔ TORONTO</span>
               </h2>
               <p style={{ fontSize: '0.96rem', color: '#B8B8B8', lineHeight: 1.55, maxWidth: '440px' }}>
                 1,800 kilometer direct highway corridor connecting Halifax, Moncton, Quebec City, Montreal, Ottawa, and Toronto.
               </p>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
-          {/* 06 EN ROUTE / JOURNEY */}
-          {s6.isVisible && (
-            <div style={sectionStyle(s6)}>
+          {/* 06 EN ROUTE */}
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s6)}>
               <div className="section-kicker">EN ROUTE</div>
-              <h2
-                style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.05, letterSpacing: '-0.03em' }}>
                 EVERY MILE,<br />
                 <span className="text-amber-glow">HANDLED WITH CARE.</span>
               </h2>
               <p style={{ fontSize: '0.96rem', color: '#B8B8B8', lineHeight: 1.55, maxWidth: '440px' }}>
                 Continuous 24/7 GPS telemetry and certified cross-provincial drivers keeping transit calm and predictable.
               </p>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 07 TRUST / SAFETY */}
-          {s7.isVisible && (
-            <div style={{ ...sectionStyle(s7), gap: '10px' }}>
+          <div style={wrapperStyle}>
+            <motion.div style={{ ...innerStyleFor(s7), gap: '10px' }}>
               <div className="section-kicker">
                 TRUST / SAFETY <span className="kicker-subtle">SECTION 7 / 10</span>
               </div>
-              <h2
-                style={{ fontSize: 'clamp(2.2rem, 3.8vw, 3.4rem)', fontWeight: 900, lineHeight: 1.08, letterSpacing: '-0.025em', color: '#FFFFFF' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.2rem, 3.8vw, 3.4rem)', fontWeight: 900, lineHeight: 1.08, letterSpacing: '-0.025em', color: '#FFFFFF' }}>
                 YOUR BELONGINGS.<br />
                 <span className="text-amber-glow">OUR RESPONSIBILITY.</span>
               </h2>
@@ -370,7 +379,6 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                     <div className="timeline-item" style={{ opacity: isActive ? 1 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
                       <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        {/* <span className={`timeline-number ${isActive ? 'active' : ''}`}>01</span> */}
                         <span className={`timeline-title ${isActive ? 'active' : ''}`}>PROTECTED, SECURED, ORGANIZED, DELIVERED</span>
                       </div>
                       <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Handled with care from the very beginning."</div>
@@ -379,81 +387,21 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                 })()}
               </div>
 
-              {/* <div className="cinematic-timeline">
-                {(() => {
-                  const isActive = progress < 0.615;
-                  return (
-                    <div className="timeline-item" style={{ opacity: isActive ? 1 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
-                      <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className={`timeline-number ${isActive ? 'active' : ''}`}>01</span>
-                        <span className={`timeline-title ${isActive ? 'active' : ''}`}>PROTECTED</span>
-                      </div>
-                      <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Handled with care from the very beginning."</div>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const isActive = progress >= 0.615 && progress < 0.645;
-                  const isFuture = progress < 0.615;
-                  return (
-                    <div className="timeline-item" style={{ opacity: isActive ? 1 : isFuture ? 0.30 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
-                      <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className={`timeline-number ${isActive ? 'active' : ''}`}>02</span>
-                        <span className={`timeline-title ${isActive ? 'active' : ''}`}>SECURED</span>
-                      </div>
-                      <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Every piece is positioned and secured for the road ahead."</div>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const isActive = progress >= 0.645 && progress < 0.675;
-                  const isFuture = progress < 0.645;
-                  return (
-                    <div className="timeline-item" style={{ opacity: isActive ? 1 : isFuture ? 0.30 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
-                      <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className={`timeline-number ${isActive ? 'active' : ''}`}>03</span>
-                        <span className={`timeline-title ${isActive ? 'active' : ''}`}>ORGANIZED</span>
-                      </div>
-                      <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Everything packed with purpose. Everything in its place."</div>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const isActive = progress >= 0.675;
-                  const isFuture = progress < 0.675;
-                  return (
-                    <div className="timeline-item" style={{ opacity: isActive ? 1 : isFuture ? 0.30 : 0.38, transform: isActive ? 'translateY(0)' : 'translateY(1px)' }}>
-                      <div className={`timeline-bullet ${isActive ? 'active' : ''}`} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className={`timeline-number ${isActive ? 'active' : ''}`}>04</span>
-                        <span className={`timeline-title ${isActive ? 'active' : ''}`}>DELIVERED</span>
-                      </div>
-                      <div className={`timeline-quote ${isActive ? 'active' : ''}`}>"Protected throughout the journey, ready for its new home."</div>
-                    </div>
-                  );
-                })()}
-              </div> */}
-
               <div className="timeline-footer-accent" style={{ opacity: progress >= 0.67 ? 1 : 0.45, transition: 'opacity 0.3s ease' }}>
                 <div>EVERY MILE.</div>
                 <div>EVERY BOX.</div>
                 <div>EVERY DETAIL.</div>
               </div>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 08 ARRIVING IN TORONTO */}
-          {s8.isVisible && (
-            <div style={{ ...sectionStyle(s8), gap: '12px' }}>
+          <div style={wrapperStyle}>
+            <motion.div style={{ ...innerStyleFor(s8), gap: '12px' }}>
               <div className="section-kicker">
                 ARRIVING IN TORONTO <span className="kicker-subtle">SECTION 8 / 10</span>
               </div>
-              <h2
-                style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, lineHeight: 1.05, letterSpacing: '-0.03em', color: '#FFFFFF' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.4rem, 4.2vw, 3.8rem)', fontWeight: 900, lineHeight: 1.05, letterSpacing: '-0.03em', color: '#FFFFFF' }}>
                 TORONTO,<br />
                 <span className="text-amber-glow">WE'RE HERE.</span>
               </h2>
@@ -515,18 +463,16 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                   );
                 })()}
               </div>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 09 DELIVERY */}
-          {s9.isVisible && (
-            <div style={{ ...sectionStyle(s9), gap: '12px' }}>
+          <div style={wrapperStyle}>
+            <motion.div style={{ ...innerStyleFor(s9), gap: '12px' }}>
               <div className="section-kicker">
                 DELIVERY <span className="kicker-subtle">SECTION 9 / 10</span>
               </div>
-              <h2
-                style={{ fontSize: 'clamp(2.2rem, 3.8vw, 3.4rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.08, letterSpacing: '-0.025em' }}
-              >
+              <h2 style={{ fontSize: 'clamp(2.2rem, 3.8vw, 3.4rem)', fontWeight: 900, color: '#FFFFFF', lineHeight: 1.08, letterSpacing: '-0.025em' }}>
                 TIME TO BRING<br />
                 <span className="text-amber-glow">IT HOME.</span>
               </h2>
@@ -555,18 +501,16 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                   <div className="timeline-quote active">One journey complete. Your move is in good hands.</div>
                 </div>
               </div>
-            </div>
-          )}
+            </motion.div>
+          </div>
 
           {/* 10 A NEW CHAPTER */}
-          {s10.isVisible && (
-            <div style={sectionStyle(s10)}>
+          <div style={wrapperStyle}>
+            <motion.div style={innerStyleFor(s10)}>
               <div className="section-kicker">
                 A NEW CHAPTER <span className="kicker-subtle">SECTION 10 / 10</span>
               </div>
-              <div
-                style={{ fontSize: 'clamp(2.8rem, 5.2vw, 4.6rem)', fontWeight: 900, lineHeight: 1.02, letterSpacing: '-0.035em', color: '#FFFFFF' }}
-              >
+              <div style={{ fontSize: 'clamp(2.8rem, 5.2vw, 4.6rem)', fontWeight: 900, lineHeight: 1.02, letterSpacing: '-0.035em', color: '#FFFFFF' }}>
                 YOU MOVE.<br />
                 <span className="text-amber-glow">WE HANDLE THE REST.</span>
               </div>
@@ -580,9 +524,6 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '6px' }}>
-                {/* <div style={{ fontSize: '0.92rem', fontWeight: 800, letterSpacing: '0.18em', color: '#FF9D32' }}>
-                  NOVA SCOTIA ➔ TORONTO
-                </div> */}
                 <div style={{ fontSize: '0.84rem', fontWeight: 700, letterSpacing: '0.08em', color: '#B8B8B8' }}>
                   NS MOVERS AND HAULERS INC.
                 </div>
@@ -596,23 +537,9 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
                   GET YOUR FREE QUOTE <ArrowRight size={17} />
                 </button>
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* {progress < 0.08 && (
-          <div
-            style={{
-              width: '100%',
-              marginTop: 'auto',
-              opacity: Math.max(0, 1 - (progress / 0.07)),
-              pointerEvents: progress < 0.06 ? 'auto' : 'none',
-              transition: 'opacity 0.2s ease-out'
-            }}
-          >
-            <StatsBar />
+            </motion.div>
           </div>
-        )} */}
+        </div>
       </div>
     </div>
   );
