@@ -20,6 +20,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onQuoteClick, activeSection }) =
 
   const scrollTo = (id: string) => {
     setMobileMenuOpen(false);
+    if (id === 'hero') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth' });
@@ -84,7 +88,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onQuoteClick, activeSection }) =
           { label: 'HOME', target: 'hero' },
           { label: 'ABOUT US', target: 'about' },
           { label: 'SERVICES', target: 'services' },
-          { label: 'OUR WORK', target: 'journey' },
+          { label: 'OUR WORK', target: 'our-work' },
           { label: 'REVIEWS', target: 'reviews' },
           { label: 'CONTACT', target: 'contact' }
         ].map((link) => {
@@ -214,7 +218,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onQuoteClick, activeSection }) =
             { label: 'HOME', target: 'hero' },
             { label: 'ABOUT US', target: 'about' },
             { label: 'SERVICES', target: 'services' },
-            { label: 'OUR WORK', target: 'journey' },
+            { label: 'OUR WORK', target: 'our-work' },
             { label: 'REVIEWS', target: 'reviews' },
             { label: 'CONTACT', target: 'contact' }
           ].map((link) => (

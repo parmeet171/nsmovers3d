@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useSmoothScroll } from './hooks/useSmoothScroll';
 import { VideoScrollSequence } from './components/VideoScrollSequence';
 import { LoadingScreen } from './components/LoadingScreen';
@@ -7,6 +7,7 @@ import { JourneyIndicator } from './components/JourneyIndicator';
 import { JourneyTimeline } from './sections/JourneyTimeline';
 import { Services } from './components/Services';
 import { About } from './components/About';
+import { OurWork } from './components/OurWork';
 import { Reviews } from './components/Reviews';
 import { QuoteForm } from './components/QuoteForm';
 import { Footer } from './components/Footer';
@@ -39,13 +40,28 @@ export const App: React.FC = () => {
   const handleProgressUpdate = useCallback((progress: number) => {
     setScrollProgress(progress);
 
-    if (progress < 0.12) {
-      setActiveSection('hero');
-    } else if (progress < 0.88) {
-      setActiveSection('journey');
-    } else {
-      setActiveSection('delivery');
-    }
+  }, []);
+
+  // Nav highlight follows the real scroll position. The whole video/story
+  // section is "HOME"; every other section highlights only once reached.
+  useEffect(() => {
+    const ids = ['services', 'about', 'our-work', 'reviews', 'contact'];
+    const update = () => {
+      const marker = window.innerHeight * 0.4;
+      let current = 'hero';
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= marker) current = id;
+      }
+      setActiveSection(current);
+    };
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
   }, []);
 
   // Smooth scroll to Quote Form
@@ -112,6 +128,7 @@ export const App: React.FC = () => {
       {/* Supporting Sections with Unified Dark Automotive Styling */}
       <Services onSelectService={handleSelectService} />
       <About />
+      <OurWork onQuoteClick={scrollToQuote} />
       <Reviews />
       <QuoteForm preselectedService={selectedService} />
       <Footer />

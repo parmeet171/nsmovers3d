@@ -219,6 +219,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
   });
 
   return (
+    <div id="hero" style={{ position: 'relative', width: '100%' }}>
     <div
       id="cinematic-scroll-track"
       style={{
@@ -541,6 +542,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 };
